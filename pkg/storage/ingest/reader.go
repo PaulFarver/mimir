@@ -29,7 +29,9 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/twmb/franz-go/plugin/kotel"
 	"github.com/twmb/franz-go/plugin/kprom"
+	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/atomic"
 
 	util_log "github.com/grafana/mimir/pkg/util/log"
@@ -646,12 +648,12 @@ type concurrentFetchers struct {
 	topicID     [16]byte
 	topicName   string
 	metrics     *readerMetrics
+	tracer      *kotel.Tracer
 
 	concurrency            int
 	nextFetchOffset        int64
 	fetchesCompressedBytes prometheus.Counter
 
-	// TODO dimitarvdimitrov do we need to take care of tracking highwatermark?
 	orderedFetches chan kgo.FetchPartition
 }
 
@@ -664,6 +666,7 @@ func newConcurrentFetchers(ctx context.Context, client *kgo.Client, logger log.L
 		topicName:      topic,
 		partitionID:    partition,
 		metrics:        metrics,
+		tracer:         kotel.NewTracer(kotel.TracerPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}))),
 		orderedFetches: make(chan kgo.FetchPartition, 1),
 		fetchesCompressedBytes: promauto.With(reg).NewCounter(prometheus.CounterOpts{
 			Name: "cortex_ingest_storage_reader_fetches_compressed_bytes_total",
@@ -707,6 +710,9 @@ func (r *concurrentFetchers) pollFetches(ctx context.Context) (result kgo.Fetche
 		return kgo.Fetches{}
 	case f := <-r.orderedFetches:
 		r.logger.Log("msg", "received ordered fetch", "num_records", len(f.Records))
+		f.EachRecord(func(record *kgo.Record) {
+			r.tracer.OnFetchRecordUnbuffered(record, true)
+		})
 		return kgo.Fetches{{
 			Topics: []kgo.FetchTopic{
 				{
@@ -758,6 +764,7 @@ func (r *concurrentFetchers) fetchSingle(ctx context.Context, w fetchWant) kgo.F
 		"num_topics", len(resp.Topics),
 		"num_partitions", len(resp.Topics[0].Partitions),
 	)
+	partition.EachRecord(r.tracer.OnFetchRecordBuffered)
 	return partition
 }
 
@@ -846,12 +853,10 @@ func (r *concurrentFetchers) runFetchers(ctx context.Context, startOffset int64)
 		case <-ctx.Done():
 			return
 		case wants <- nextFetch:
-			r.logger.Log("msg", "wrote to results")
 			results.PushBack(nextFetch.result)
 			if nextResult == nil {
 				nextResult = results.Front().Value.(chan kgo.FetchPartition)
 				results.Remove(results.Front())
-				r.logger.Log("msg", "took from results")
 			}
 			nextFetch = nextFetchWant(nextFetch)
 		case result, moreLeft := <-nextResult:
@@ -859,7 +864,6 @@ func (r *concurrentFetchers) runFetchers(ctx context.Context, startOffset int64)
 				if results.Len() > 0 {
 					nextResult = results.Front().Value.(chan kgo.FetchPartition)
 					results.Remove(results.Front())
-					r.logger.Log("msg", "took from results")
 				} else {
 					nextResult = nil
 				}
