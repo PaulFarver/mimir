@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -345,37 +344,21 @@ func (am *Alertmanager) GetReceiversHandler(w http.ResponseWriter, _ *http.Reque
 }
 
 func (am *Alertmanager) TestReceiversHandler(w http.ResponseWriter, r *http.Request) {
-	payload, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w,
-			fmt.Sprintf("error reading request body: %s", err.Error()),
-			http.StatusBadRequest)
-	}
-
 	c := alertingNotify.TestReceiversConfigBodyParams{}
-	err = json.Unmarshal(payload, &c)
-	if err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 		http.Error(w,
 			fmt.Sprintf("error unmarshalling test receivers config JSON: %s", err.Error()),
 			http.StatusBadRequest)
 	}
-	response, err := alertingNotify.TestReceivers(context.Background(), c, am.cfg.Templates, am.BuildGrafanaReceiverIntegrations, am.cfg.ExternalURL.String())
+	response, err := alertingNotify.TestReceivers(r.Context(), c, am.cfg.Templates, am.buildGrafanaReceiverIntegrations, am.cfg.ExternalURL.String())
 	if err != nil {
 		http.Error(w,
 			fmt.Sprintf("error testing receivers: %s", err.Error()),
 			http.StatusInternalServerError)
 	}
 
-	d, err := json.Marshal(response)
-	if err != nil {
-		http.Error(w,
-			fmt.Sprintf("error marshalling test receivers result: %s", err.Error()),
-			http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if _, err := w.Write(d); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -575,7 +558,7 @@ func (am *Alertmanager) buildIntegrationsMap(nc []*definition.PostableApiReceive
 	return integrationsMap, nil
 }
 
-func (am *Alertmanager) BuildGrafanaReceiverIntegrations(rcv *alertingNotify.APIReceiver, tmpl *template.Template) ([]*nfstatus.Integration, error) {
+func (am *Alertmanager) buildGrafanaReceiverIntegrations(rcv *alertingNotify.APIReceiver, tmpl *template.Template) ([]*nfstatus.Integration, error) {
 	return buildGrafanaReceiverIntegrations(rcv, tmpl, am.logger)
 }
 
