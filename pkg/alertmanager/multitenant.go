@@ -837,6 +837,7 @@ func (am *MultitenantAlertmanager) newAlertmanager(userID string, amConfig *defi
 		PersisterConfig:                   am.cfg.Persister,
 		Limits:                            am.limits,
 		Features:                          am.features,
+		Templates:                         amConfig.Templates,
 		GrafanaAlertmanagerCompatibility:  am.cfg.GrafanaAlertmanagerCompatibilityEnabled,
 	}, reg)
 	if err != nil {
