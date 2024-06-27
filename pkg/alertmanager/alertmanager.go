@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -350,6 +351,7 @@ func (am *Alertmanager) TestReceiversHandler(w http.ResponseWriter, r *http.Requ
 			fmt.Sprintf("error unmarshalling test receivers config JSON: %s", err.Error()),
 			http.StatusBadRequest)
 	}
+
 	response, err := alertingNotify.TestReceivers(r.Context(), c, am.cfg.Templates, am.buildGrafanaReceiverIntegrations, am.cfg.ExternalURL.String())
 	if err != nil {
 		http.Error(w,
@@ -380,12 +382,19 @@ func clusterWait(position func() int, timeout time.Duration) func() time.Duratio
 }
 
 // ApplyConfig applies a new configuration to an Alertmanager.
-func (am *Alertmanager) ApplyConfig(conf *definition.PostableApiAlertingConfig, tmpls []io.Reader, rawCfg string, tmplExternalURL *url.URL) error {
-	tmpl, err := loadTemplates(tmpls, WithCustomFunctions(am.cfg.UserID))
+func (am *Alertmanager) ApplyConfig(conf *definition.PostableApiAlertingConfig, tmpls []string, rawCfg string, tmplExternalURL *url.URL) error {
+	tmplsReader := make([]io.Reader, len(tmpls))
+	for _, tmplString := range tmpls {
+		tmplsReader = append(tmplsReader, strings.NewReader(tmplString))
+	}
+
+	tmpl, err := loadTemplates(tmplsReader, WithCustomFunctions(am.cfg.UserID))
 	if err != nil {
 		return err
 	}
 	tmpl.ExternalURL = tmplExternalURL
+
+	am.cfg.Templates = tmpls
 
 	cfg := definition.GrafanaToUpstreamConfig(conf)
 	am.api.Update(&cfg, func(_ model.LabelSet) {})
@@ -411,7 +420,7 @@ func (am *Alertmanager) ApplyConfig(conf *definition.PostableApiAlertingConfig, 
 		return d + waitFunc()
 	}
 
-	integrationsMap, err := am.buildIntegrationsMap(conf.Receivers, tmpl, tmpls)
+	integrationsMap, err := am.buildIntegrationsMap(conf.Receivers, tmpl, tmplsReader)
 	if err != nil {
 		return err
 	}
