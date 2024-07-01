@@ -90,7 +90,6 @@ type Config struct {
 	ExternalURL                       *url.URL
 	Limits                            Limits
 	Features                          featurecontrol.Flagger
-	Templates                         []string
 
 	// Tenant-specific local directory where AM can store its state (notifications, silences, templates). When AM is stopped, entire dir is removed.
 	TenantDataDir string
@@ -124,6 +123,7 @@ type Alertmanager struct {
 	registry        *prometheus.Registry
 	receiversMtx    sync.Mutex
 	receivers       []*nfstatus.Receiver
+	templates       []string
 
 	// Pipeline created during last ApplyConfig call. Used for testing only.
 	lastPipeline notify.Stage
@@ -352,7 +352,7 @@ func (am *Alertmanager) TestReceiversHandler(w http.ResponseWriter, r *http.Requ
 			http.StatusBadRequest)
 	}
 
-	response, err := alertingNotify.TestReceivers(r.Context(), c, am.cfg.Templates, am.buildGrafanaReceiverIntegrations, am.cfg.ExternalURL.String())
+	response, err := alertingNotify.TestReceivers(r.Context(), c, am.templates, am.buildGrafanaReceiverIntegrations, am.cfg.ExternalURL.String())
 	if err != nil {
 		http.Error(w,
 			fmt.Sprintf("error testing receivers: %s", err.Error()),
@@ -394,7 +394,7 @@ func (am *Alertmanager) ApplyConfig(conf *definition.PostableApiAlertingConfig, 
 	}
 	tmpl.ExternalURL = tmplExternalURL
 
-	am.cfg.Templates = tmpls
+	am.templates = tmpls
 
 	cfg := definition.GrafanaToUpstreamConfig(conf)
 	am.api.Update(&cfg, func(_ model.LabelSet) {})
