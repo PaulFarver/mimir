@@ -40,6 +40,7 @@ import (
 	"github.com/grafana/mimir/pkg/storegateway"
 	"github.com/grafana/mimir/pkg/storegateway/storegatewaypb"
 	streamingcompat "github.com/grafana/mimir/pkg/streamingpromql/compat"
+	"github.com/grafana/mimir/pkg/util/chunkinfologger"
 	"github.com/grafana/mimir/pkg/util/gziphandler"
 	util_log "github.com/grafana/mimir/pkg/util/log"
 	"github.com/grafana/mimir/pkg/util/validation"
@@ -88,6 +89,7 @@ func (cfg *Config) RegisterFlagsWithPrefix(prefix string, f *flag.FlagSet) {
 func DefaultHeaderOptionsMiddlewareConfig() querierapi.HeaderOptionsConfig {
 	return querierapi.HeaderOptionsConfig{
 		Headers: map[string]func(string) error{
+			chunkinfologger.ChunkInfoLoggingHeader:  chunkinfologger.ChunkInfoLoggingHeaderValidator,
 			querierapi.ReadConsistencyHeader:        querierapi.IsValidReadConsistency,
 			streamingcompat.ForceFallbackHeaderName: streamingcompat.ForceFallbackHeaderNameValidator,
 		},
