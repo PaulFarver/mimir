@@ -436,6 +436,7 @@ func (w httpGrpcHeaderWriter) Set(key, val string) {
 }
 
 func (sp *schedulerProcessor) createFrontendClient(addr string) (client.PoolClient, error) {
+	// TODO isn't the exact same of grpcclient.Instrument?
 	opts, err := sp.grpcConfig.DialOption([]grpc.UnaryClientInterceptor{
 		otgrpc.OpenTracingClientInterceptor(opentracing.GlobalTracer()),
 		middleware.ClientUserHeaderInterceptor,

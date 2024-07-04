@@ -275,8 +275,8 @@ func (rt *clientRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 
 	req.Header.Set("User-Agent", "mimir-continuous-test")
 
-	if lvl, ok := querierapi.ReadConsistencyFromContext(req.Context()); ok {
-		req.Header.Add(querierapi.ReadConsistencyHeader, lvl)
+	if level, ok := querierapi.ReadConsistencyFromContext(req.Context()); ok {
+		req.Header.Add(querierapi.ReadConsistencyHeader, level)
 	}
 
 	return rt.rt.RoundTrip(req)

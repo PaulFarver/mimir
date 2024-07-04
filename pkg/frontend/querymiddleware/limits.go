@@ -101,6 +101,9 @@ type Limits interface {
 
 	// QueryIngestersWithin returns the maximum lookback beyond which queries are not sent to ingester.
 	QueryIngestersWithin(userID string) time.Duration
+
+	// IngestStorageReadConsistency returns the default read consistency for the tenant.
+	IngestStorageReadConsistency(userID string) string
 }
 
 type limitsMiddleware struct {
@@ -214,6 +217,9 @@ func (rt limitedParallelismRoundTripper) RoundTrip(r *http.Request) (*http.Respo
 		return nil, err
 	}
 
+	// TODO DEBUG
+	//fmt.Println("limitedParallelismRoundTripper.RoundTrip() decoded request headers:", request.GetHeaders())
+
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		request.AddSpanTags(span)
 	}
@@ -259,6 +265,9 @@ func (rth roundTripperHandler) Do(ctx context.Context, r MetricsQueryRequest) (R
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO DEBUG
+	//fmt.Println("roundTripperHandler.Do() re-encoded request headers:", request.Header)
 
 	if err := user.InjectOrgIDIntoHTTPRequest(ctx, request); err != nil {
 		return nil, apierror.New(apierror.TypeBadData, err.Error())

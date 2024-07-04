@@ -140,8 +140,46 @@ func (p *partitionOffsetClient) FetchPartitionStartOffset(ctx context.Context, p
 	return p.fetchPartitionOffset(ctx, partitionID, kafkaOffsetStart)
 }
 
+// TODO doc + unit test
+// TODO remove code duplicated with FetchLastProducedOffset()
+func (p *partitionOffsetClient) FetchLastProducedOffsets(ctx context.Context) (_ map[int32]int64, returnErr error) {
+	var (
+		startTime = time.Now()
+
+		// Init metrics for a partition even if they're not tracked (e.g. failures).
+		requestsTotal   = p.lastProducedOffsetRequestsTotal.WithLabelValues("all")
+		requestsLatency = p.lastProducedOffsetLatency.WithLabelValues("all")
+		failuresTotal   = p.lastProducedOffsetFailuresTotal.WithLabelValues("all")
+	)
+
+	requestsTotal.Inc()
+	defer func() {
+		// We track the latency also in case of error, so that if the request times out it gets
+		// pretty clear looking at latency too.
+		requestsLatency.Observe(time.Since(startTime).Seconds())
+
+		if returnErr != nil {
+			failuresTotal.Inc()
+		}
+	}()
+
+	offsets, err := p.fetchPartitionsOffset(ctx, kafkaOffsetEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	// The offsets we get is the offset at which the next message will be written, so to get the last produced offset
+	// we have to subtract 1. See DESIGN.md for more details.
+	for partition, offset := range offsets {
+		offsets[partition] = offset - 1
+	}
+
+	return offsets, nil
+}
+
 func (p *partitionOffsetClient) fetchPartitionOffset(ctx context.Context, partitionID int32, position int64) (int64, error) {
 	// Create a custom request to fetch the latest offset of a specific partition.
+	// TODO explain why (Vladimir feedback)
 	partitionReq := kmsg.NewListOffsetsRequestTopicPartition()
 	partitionReq.Partition = partitionID
 	partitionReq.Timestamp = position
@@ -191,4 +229,39 @@ func (p *partitionOffsetClient) fetchPartitionOffset(ctx context.Context, partit
 	}
 
 	return listRes.Topics[0].Partitions[0].Offset, nil
+}
+
+// TODO doc + unit test
+func (p *partitionOffsetClient) fetchPartitionsOffset(ctx context.Context, position int64) (map[int32]int64, error) {
+	var res kadm.ListedOffsets
+	var err error
+
+	// Fetch the offsets.
+	// TODO not much optimized. This issue 2 requests in sequence, because it needs to find the partitions first.
+	switch position {
+	case kafkaOffsetStart:
+		res, err = p.admin.ListStartOffsets(ctx, p.topic)
+
+	case kafkaOffsetEnd:
+		res, err = p.admin.ListEndOffsets(ctx, p.topic)
+
+	default:
+		return nil, fmt.Errorf("fetching offset for position %d is not supported", position)
+	}
+
+	// Check if any error occurred.
+	if err != nil {
+		return nil, err
+	}
+	if err := res.Error(); err != nil {
+		return nil, err
+	}
+
+	// Build a simple map for the offsets.
+	offsets := make(map[int32]int64, len(res[p.topic]))
+	res.Each(func(offset kadm.ListedOffset) {
+		offsets[offset.Partition] = offset.Offset
+	})
+
+	return offsets, nil
 }

@@ -577,16 +577,25 @@ func (c prometheusCodec) EncodeMetricsQueryRequest(ctx context.Context, r Metric
 		return nil, fmt.Errorf("unknown query result response format '%s'", c.preferredQueryResultResponseFormat)
 	}
 
-	if consistency, ok := api.ReadConsistencyFromContext(ctx); ok {
-		req.Header.Add(api.ReadConsistencyHeader, consistency)
+	if level, ok := api.ReadConsistencyFromContext(ctx); ok {
+		req.Header.Add(api.ReadConsistencyHeader, level)
 	}
+	// TODO unit test
+	//if offsets, ok := api.ReadConsistencyOffsetsFromContext(ctx); ok {
+	//	req.Header.Add(api.ReadConsistencyOffsetsHeader, string(offsets))
+	//}
+
+	// TODO unit test
+	propagateHeaders := []string{compat.ForceFallbackHeaderName, api.ReadConsistencyOffsetsHeader}
 
 	for _, h := range r.GetHeaders() {
-		if h.Name == compat.ForceFallbackHeaderName {
-			for _, v := range h.Values {
-				// There should only be one value, but add all of them for completeness.
-				req.Header.Add(compat.ForceFallbackHeaderName, v)
-			}
+		if !slices.Contains(propagateHeaders, h.Name) {
+			continue
+		}
+
+		for _, v := range h.Values {
+			// There should only be one value, but add all of them for completeness.
+			req.Header.Add(h.Name, v)
 		}
 	}
 
@@ -656,9 +665,15 @@ func (c prometheusCodec) EncodeLabelsQueryRequest(ctx context.Context, req Label
 		return nil, fmt.Errorf("unknown query result response format '%s'", c.preferredQueryResultResponseFormat)
 	}
 
-	if consistency, ok := api.ReadConsistencyFromContext(ctx); ok {
-		r.Header.Add(api.ReadConsistencyHeader, consistency)
+	if level, ok := api.ReadConsistencyFromContext(ctx); ok {
+		r.Header.Add(api.ReadConsistencyHeader, level)
 	}
+	// TODO unit test
+	//if offsets, ok := api.ReadConsistencyOffsetsFromContext(ctx); ok {
+	//	r.Header.Add(api.ReadConsistencyOffsetsHeader, string(offsets))
+	//}
+
+	// TODO propagate the header here as well
 
 	return r.WithContext(ctx), nil
 }

@@ -70,7 +70,7 @@ type PartitionReader struct {
 	// consumedOffsetWatcher is used to wait until a given offset has been consumed.
 	// This gets initialised with -1 which means nothing has been consumed from the partition yet.
 	consumedOffsetWatcher *partitionOffsetWatcher
-	offsetReader          *partitionOffsetReader
+	offsetReader          *PartitionOffsetReader
 
 	logger log.Logger
 	reg    prometheus.Registerer
@@ -125,7 +125,7 @@ func (r *PartitionReader) start(ctx context.Context) (returnErr error) {
 	}
 	r.committer = newPartitionCommitter(r.kafkaCfg, kadm.NewClient(r.client), r.partitionID, r.consumerGroup, r.logger, r.reg)
 
-	r.offsetReader = newPartitionOffsetReader(r.client, r.kafkaCfg.Topic, r.partitionID, r.kafkaCfg.LastProducedOffsetPollInterval, r.reg, r.logger)
+	r.offsetReader = NewPartitionOffsetReader(r.client, r.kafkaCfg.Topic, r.partitionID, r.kafkaCfg.LastProducedOffsetPollInterval, r.reg, r.logger)
 
 	r.dependencies, err = services.NewManager(r.committer, r.offsetReader, r.consumedOffsetWatcher)
 	if err != nil {
@@ -263,7 +263,7 @@ func (r *PartitionReader) processNextFetchesUntilLagHonored(ctx context.Context,
 
 	for boff.Ongoing() {
 		// Send a direct request to the Kafka backend to fetch the partition start offset.
-		partitionStartOffset, err := r.offsetReader.FetchPartitionStartOffset(ctx)
+		partitionStartOffset, err := r.offsetReader.client.FetchPartitionStartOffset(ctx, r.partitionID)
 		if err != nil {
 			level.Warn(logger).Log("msg", "partition reader failed to fetch partition start offset", "err", err)
 			boff.Wait()
@@ -274,7 +274,7 @@ func (r *PartitionReader) processNextFetchesUntilLagHonored(ctx context.Context,
 		// We intentionally don't use WaitNextFetchLastProducedOffset() to not introduce further
 		// latency.
 		lastProducedOffsetRequestedAt := time.Now()
-		lastProducedOffset, err := r.offsetReader.FetchLastProducedOffset(ctx)
+		lastProducedOffset, err := r.offsetReader.client.FetchLastProducedOffset(ctx, r.partitionID)
 		if err != nil {
 			level.Warn(logger).Log("msg", "partition reader failed to fetch last produced offset", "err", err)
 			boff.Wait()
@@ -462,13 +462,19 @@ func (r *PartitionReader) recordFetchesMetrics(fetches kgo.Fetches, delayObserve
 }
 
 func (r *PartitionReader) newKafkaReader(at kgo.Offset) (*kgo.Client, error) {
-	const fetchMaxBytes = 100_000_000
-
-	opts := append(
-		commonKafkaClientOptions(r.kafkaCfg, r.metrics.kprom, r.logger),
+	return NewKafkaReadClient(r.kafkaCfg, r.metrics.kprom, r.logger,
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{
 			r.kafkaCfg.Topic: {r.partitionID: at},
 		}),
+	)
+}
+
+// TODO move elsewhere
+func NewKafkaReadClient(cfg KafkaConfig, metrics *kprom.Metrics, logger log.Logger, opts ...kgo.Opt) (*kgo.Client, error) {
+	const fetchMaxBytes = 100_000_000
+
+	opts = append(opts, commonKafkaClientOptions(cfg, metrics, logger)...)
+	opts = append(opts,
 		kgo.FetchMinBytes(1),
 		kgo.FetchMaxBytes(fetchMaxBytes),
 		kgo.FetchMaxWait(5*time.Second),
@@ -607,7 +613,21 @@ func (r *PartitionReader) fetchFirstOffsetAfterTime(ctx context.Context, cl *kgo
 }
 
 // WaitReadConsistency waits until all data produced up until now has been consumed by the reader.
+// TODO rename to WaitReadConsistencyUntilLastProducedOffset()
 func (r *PartitionReader) WaitReadConsistency(ctx context.Context) (returnErr error) {
+	return r.waitReadConsistency(ctx, func(ctx context.Context) (int64, error) {
+		return r.offsetReader.WaitNextFetchLastProducedOffset(ctx)
+	})
+}
+
+// TODO doc + unit test
+func (r *PartitionReader) WaitReadConsistencyUntilOffset(ctx context.Context, offset int64) (returnErr error) {
+	return r.waitReadConsistency(ctx, func(_ context.Context) (int64, error) {
+		return offset, nil
+	})
+}
+
+func (r *PartitionReader) waitReadConsistency(ctx context.Context, getOffset func(context.Context) (int64, error)) (returnErr error) {
 	startTime := time.Now()
 	r.metrics.strongConsistencyRequests.Inc()
 
@@ -642,15 +662,15 @@ func (r *PartitionReader) WaitReadConsistency(ctx context.Context) (returnErr er
 		return fmt.Errorf("partition reader service is not running (state: %s)", state.String())
 	}
 
-	// Get the last produced offset.
-	lastProducedOffset, err := r.offsetReader.WaitNextFetchLastProducedOffset(ctx)
+	// Get the offset to wait for.
+	offset, err := getOffset(ctx)
 	if err != nil {
 		return err
 	}
 
-	spanLog.DebugLog("msg", "catching up with last produced offset", "offset", lastProducedOffset)
+	spanLog.DebugLog("msg", "catching up with offset", "offset", offset)
 
-	return r.consumedOffsetWatcher.Wait(ctx, lastProducedOffset)
+	return r.consumedOffsetWatcher.Wait(ctx, offset)
 }
 
 func (r *PartitionReader) pollFetches(ctx context.Context) kgo.Fetches {
@@ -868,9 +888,15 @@ func newReaderMetrics(partitionID int32, reg prometheus.Registerer) readerMetric
 			Buckets:                         prometheus.DefBuckets,
 		}),
 		lastConsumedOffset: lastConsumedOffset,
-		kprom: kprom.NewMetrics("cortex_ingest_storage_reader",
-			kprom.Registerer(prometheus.WrapRegistererWith(prometheus.Labels{"partition": strconv.Itoa(int(partitionID))}, reg)),
-			// Do not export the client ID, because we use it to specify options to the backend.
-			kprom.FetchAndProduceDetail(kprom.Batches, kprom.Records, kprom.CompressedBytes, kprom.UncompressedBytes)),
+		kprom: NewKafkaReadClientMetrics("cortex_ingest_storage_reader",
+			prometheus.WrapRegistererWith(prometheus.Labels{"partition": strconv.Itoa(int(partitionID))}, reg)),
 	}
+}
+
+// TODO move elsewhere
+func NewKafkaReadClientMetrics(namespace string, reg prometheus.Registerer) *kprom.Metrics {
+	return kprom.NewMetrics(namespace,
+		kprom.Registerer(reg),
+		// Do not export the client ID, because we use it to specify options to the backend.
+		kprom.FetchAndProduceDetail(kprom.Batches, kprom.Records, kprom.CompressedBytes, kprom.UncompressedBytes))
 }
