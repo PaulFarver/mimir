@@ -556,7 +556,7 @@ func concat(queries ...string) string {
 		exprs = append(exprs, n)
 
 	}
-	mapped, err := vectorSquasher(exprs...)
+	mapped, err := VectorSquasher(exprs...)
 	if err != nil {
 		panic(err)
 	}
@@ -577,7 +577,7 @@ func TestShardSummerWithEncoding(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("[%d]", i), func(t *testing.T) {
 			stats := NewMapperStats()
-			summer, err := newShardSummer(context.Background(), c.shards, vectorSquasher, log.NewNopLogger(), stats)
+			summer, err := newQueryShardSummer(context.Background(), c.shards, VectorSquasher, log.NewNopLogger(), stats)
 			require.Nil(t, err)
 			expr, err := parser.ParseExpr(c.input)
 			require.Nil(t, err)
