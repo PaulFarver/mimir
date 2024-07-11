@@ -36,7 +36,7 @@ func TestPartitionOffsetReader(t *testing.T) {
 		)
 
 		// Run with a very high polling interval, so that it will never run in this test.
-		reader := NewPartitionOffsetReader(createTestKafkaClient(t, kafkaCfg), topicName, partitionID, time.Hour, nil, log.NewNopLogger())
+		reader := newPartitionOffsetReader(createTestKafkaClient(t, kafkaCfg), topicName, partitionID, time.Hour, nil, log.NewNopLogger())
 		require.NoError(t, services.StartAndAwaitRunning(ctx, reader))
 
 		// Run few goroutines waiting for the last produced offset.
@@ -79,7 +79,7 @@ func TestPartitionOffsetReader_WaitNextFetchLastProducedOffset(t *testing.T) {
 			cluster, clusterAddr = testkafka.CreateCluster(t, numPartitions, topicName)
 			kafkaCfg             = createTestKafkaConfig(clusterAddr, topicName)
 			client               = createTestKafkaClient(t, kafkaCfg)
-			reader               = NewPartitionOffsetReader(client, topicName, partitionID, pollInterval, nil, logger)
+			reader               = newPartitionOffsetReader(client, topicName, partitionID, pollInterval, nil, logger)
 
 			lastOffset           = atomic.NewInt64(1)
 			firstRequestReceived = make(chan struct{})
@@ -142,7 +142,7 @@ func TestPartitionOffsetReader_WaitNextFetchLastProducedOffset(t *testing.T) {
 		)
 
 		// Create the reader but do NOT start it, so that the "last produced offset" will be never fetched.
-		reader := NewPartitionOffsetReader(client, topicName, partitionID, pollInterval, nil, logger)
+		reader := newPartitionOffsetReader(client, topicName, partitionID, pollInterval, nil, logger)
 
 		canceledCtx, cancel := context.WithCancel(ctx)
 		cancel()

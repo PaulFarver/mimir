@@ -21,11 +21,11 @@ var (
 	errPartitionOffsetReaderStopped = errors.New("partition offset reader is stopped")
 )
 
-// PartitionOffsetReader is responsible to read the offsets of a single partition.
+// partitionOffsetReader is responsible to read the offsets of a single partition.
 //
 // If in the future we'll need to read offsets of multiple partitions at once, then we shouldn't use
 // this structure but create a new one which fetches multiple partition offsets in a single request.
-type PartitionOffsetReader struct {
+type partitionOffsetReader struct {
 	services.Service
 
 	client      *partitionOffsetClient
@@ -38,8 +38,8 @@ type PartitionOffsetReader struct {
 	nextResultPromise   *resultPromise[int64]
 }
 
-func NewPartitionOffsetReader(client *kgo.Client, topic string, partitionID int32, pollInterval time.Duration, reg prometheus.Registerer, logger log.Logger) *PartitionOffsetReader {
-	p := &PartitionOffsetReader{
+func newPartitionOffsetReader(client *kgo.Client, topic string, partitionID int32, pollInterval time.Duration, reg prometheus.Registerer, logger log.Logger) *partitionOffsetReader {
+	p := &partitionOffsetReader{
 		client:            newPartitionOffsetClient(client, topic, reg, logger),
 		partitionID:       partitionID,
 		logger:            logger, // Do not wrap with partition ID because it's already done by the caller.
@@ -51,7 +51,7 @@ func NewPartitionOffsetReader(client *kgo.Client, topic string, partitionID int3
 	return p
 }
 
-func (p *PartitionOffsetReader) onPollInterval(ctx context.Context) error {
+func (p *partitionOffsetReader) onPollInterval(ctx context.Context) error {
 	// The following call blocks until the last produced offset has been fetched from Kafka. If fetching
 	// the offset takes longer than the poll interval, than we'll poll less frequently than configured.
 	p.getAndNotifyLastProducedOffset(ctx)
@@ -60,7 +60,7 @@ func (p *PartitionOffsetReader) onPollInterval(ctx context.Context) error {
 	return nil
 }
 
-func (p *PartitionOffsetReader) stopping(_ error) error {
+func (p *partitionOffsetReader) stopping(_ error) error {
 	// Release any waiting goroutine without swapping the result promise so that if any other goroutine
 	// will watch it after this point it will get immediately notified.
 	p.nextResultPromiseMx.Lock()
@@ -72,7 +72,7 @@ func (p *PartitionOffsetReader) stopping(_ error) error {
 
 // getAndNotifyLastProducedOffset fetches the last produced offset for a partition and notifies all waiting
 // goroutines (if any).
-func (p *PartitionOffsetReader) getAndNotifyLastProducedOffset(ctx context.Context) {
+func (p *partitionOffsetReader) getAndNotifyLastProducedOffset(ctx context.Context) {
 	// Swap the next promise with a new one.
 	p.nextResultPromiseMx.Lock()
 	promise := p.nextResultPromise
@@ -94,14 +94,14 @@ func (p *PartitionOffsetReader) getAndNotifyLastProducedOffset(ctx context.Conte
 // FetchLastProducedOffset fetches and returns the last produced offset for a partition, or -1 if no record has
 // been ever produced in the partition. This function issues a single request, but the Kafka client used under the
 // hood may retry a failed request until the retry timeout is hit.
-func (p *PartitionOffsetReader) FetchLastProducedOffset(ctx context.Context) (_ int64, returnErr error) {
+func (p *partitionOffsetReader) FetchLastProducedOffset(ctx context.Context) (_ int64, returnErr error) {
 	return p.client.FetchLastProducedOffset(ctx, p.partitionID)
 }
 
 // FetchPartitionStartOffset fetches and returns the start offset for a partition. This function returns 0 if no record has
 // been ever produced in the partition. This function issues a single request, but the Kafka client used under the
 // hood may retry a failed request until the retry timeout is hit.
-func (p *PartitionOffsetReader) FetchPartitionStartOffset(ctx context.Context) (_ int64, returnErr error) {
+func (p *partitionOffsetReader) FetchPartitionStartOffset(ctx context.Context) (_ int64, returnErr error) {
 	return p.client.FetchPartitionStartOffset(ctx, p.partitionID)
 }
 
@@ -110,7 +110,7 @@ func (p *PartitionOffsetReader) FetchPartitionStartOffset(ctx context.Context) (
 //
 // The "last produced offset" is the offset of the last message written to the partition (starting from 0), or -1 if no
 // message has been written yet.
-func (p *PartitionOffsetReader) WaitNextFetchLastProducedOffset(ctx context.Context) (int64, error) {
+func (p *partitionOffsetReader) WaitNextFetchLastProducedOffset(ctx context.Context) (int64, error) {
 	// Get the promise for the result of the next request that will be issued.
 	p.nextResultPromiseMx.RLock()
 	promise := p.nextResultPromise
@@ -119,7 +119,7 @@ func (p *PartitionOffsetReader) WaitNextFetchLastProducedOffset(ctx context.Cont
 	return promise.wait(ctx)
 }
 
-// TODO this is almost a copy of PartitionOffsetReader. Can we use generics?
+// TODO this is almost a copy of partitionOffsetReader. Can we use generics?
 // TODO doc
 type PartitionOffsetsReader struct {
 	services.Service

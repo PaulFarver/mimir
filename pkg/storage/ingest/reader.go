@@ -70,7 +70,7 @@ type PartitionReader struct {
 	// consumedOffsetWatcher is used to wait until a given offset has been consumed.
 	// This gets initialised with -1 which means nothing has been consumed from the partition yet.
 	consumedOffsetWatcher *partitionOffsetWatcher
-	offsetReader          *PartitionOffsetReader
+	offsetReader          *partitionOffsetReader
 
 	logger log.Logger
 	reg    prometheus.Registerer
@@ -125,7 +125,7 @@ func (r *PartitionReader) start(ctx context.Context) (returnErr error) {
 	}
 	r.committer = newPartitionCommitter(r.kafkaCfg, kadm.NewClient(r.client), r.partitionID, r.consumerGroup, r.logger, r.reg)
 
-	r.offsetReader = NewPartitionOffsetReader(r.client, r.kafkaCfg.Topic, r.partitionID, r.kafkaCfg.LastProducedOffsetPollInterval, r.reg, r.logger)
+	r.offsetReader = newPartitionOffsetReader(r.client, r.kafkaCfg.Topic, r.partitionID, r.kafkaCfg.LastProducedOffsetPollInterval, r.reg, r.logger)
 
 	r.dependencies, err = services.NewManager(r.committer, r.offsetReader, r.consumedOffsetWatcher)
 	if err != nil {
