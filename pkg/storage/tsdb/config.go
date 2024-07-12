@@ -462,7 +462,7 @@ func (cfg *BucketStoreConfig) Validate() error {
 		return errors.Wrap(err, "bucket-index configuration")
 	}
 	if cfg.SeriesFetchPreference <= 0 {
-		return errors.New("invalid worst-case series preference; must be positive")
+		return errors.New("invalid series fetch preference; must be positive")
 	}
 	if err := cfg.IndexHeader.Validate(); err != nil {
 		return errors.Wrap(err, "index-header configuration")
